@@ -1,0 +1,224 @@
+# Write your code here
+import random
+import sqlite3
+# sets up database
+next_id = 0
+current_user = ""
+conn = sqlite3.connect("card.s3db")
+cur = conn.cursor()
+cur.execute('''CREATE TABLE IF NOT EXISTS card
+    (id INTEGER,
+    number TEXT,
+    pin TEXT,
+    balance INTEGER DEFAULT 0);''')
+
+
+# finds the next id
+def new_account_id():
+    global next_id
+    cur.execute('''
+        SELECT id FROM card
+        ORDER BY id DESC;''')
+    conn.commit()
+
+    if cur.fetchone() is None:
+        return next_id
+    else:
+        next_id += 1
+        return next_id
+
+
+class Bank:
+
+    def __init__(self):
+        self.inn = "400000"
+        self.terminate = False
+
+    def main_menu(self):
+        while not self.terminate:
+            print("1. Create an account")
+            print("2. Log into account")
+            print("0. Exit")
+            choice = int(input())
+            if choice == 1:
+                self.create_account()
+            elif choice == 2:
+                self.log_in()
+            elif choice == 3:
+                cur.execute("SELECT * from card")
+                all_data = cur.fetchall()
+                conn.commit()
+                print(all_data)
+            else:
+                self.terminate = True
+        else:
+            print("Bye!")
+
+    def create_account(self):
+        card = self.create_card()
+        pin = self.generate_pin()
+        account_id = new_account_id()
+        sql_code = f"INSERT INTO card (id,number,pin) VALUES ({account_id},{card},{pin});"
+        cur.execute(sql_code)
+        #print(sql_code)
+        conn.commit()
+        print("Your card has been created")
+        print("Your card number:")
+        print(card)
+        print("Your card PIN:")
+        print(pin)
+
+    def create_card(self):
+        series = self.inn
+        card_sum = 8
+        for i in range(9):
+            current_num = random.randint(0, 9)
+            luhn_num = current_num
+            if i % 2 == 0:
+                luhn_num *= 2
+            if luhn_num > 9:
+                luhn_num -= 9
+            card_sum += luhn_num
+            luhn_num = 0
+            series += str(current_num)
+        series += str(0 if card_sum % 10 == 0 else 10 - card_sum % 10)
+        return series
+
+    def check_luhn(self, card):
+        n_digits = len(card)
+        n_sum = 0
+        is_second = False
+        for i in range(n_digits - 1, -1, -1):
+            d = ord(card[i]) - ord('0')
+            if is_second == True:
+                d = d * 2
+            # We add two digits to handle
+            # cases that make two digits after
+            # doubling
+            n_sum += d // 10
+            n_sum += d % 10
+            is_second = not is_second
+        if n_sum % 10 == 0:
+            return True
+        else:
+            return False
+
+    def generate_pin(self):
+        pin = ""
+        for i in range(4):
+            pin += str(random.randint(0, 9))
+        return pin
+
+    def log_in(self):
+        global current_user
+        print("Enter your card number:")
+
+        user_card = str(input())
+        print("Enter your PIN:")
+        user_pin = str(input())
+        cur.execute('''
+        SELECT 
+            number,
+            pin
+        FROM card
+        WHERE
+        number = {}
+        AND pin = {};
+        '''.format(user_card, user_pin))
+        search_result = cur.fetchone()
+        conn.commit()
+        if search_result is None:
+            print("Wrong card number or PIN!")
+        else :
+            print("You have successfully logged in!")
+            (current_user, pin) = search_result
+            self.balance_menu()
+
+    def update_and_check_balance(self, card, amount):
+        sql_code_find_bal = f"SELECT balance FROM card WHERE number = {card};"
+        cur.execute(sql_code_find_bal)
+        current_user_balance = cur.fetchone()
+        current_user_balance = int(current_user_balance[0])
+        conn.commit()
+        if current_user_balance + amount < 0:
+            return False
+        else:
+            current_user_balance += amount
+            sql_code_update_bal = f"UPDATE card SET balance = {current_user_balance} WHERE number = {card}; "
+            cur.execute(sql_code_update_bal)
+            conn.commit()
+
+    def balance_menu(self):
+        global current_user
+        sql_code = f"SELECT balance FROM card WHERE number = {current_user} "
+        cur.execute(sql_code)
+        current_user_balance = cur.fetchone()
+        current_user_balance = int(current_user_balance[0])
+        conn.commit()
+        print("1. Balance")
+        print("2. Add income")
+        print("3. Do transfer")
+        print("4. Close account")
+        print("5. Log out")
+        print("0. Exit")
+        user_choice = int(input())
+
+        if user_choice == 1:
+            print()
+            print(f"Balance: {current_user_balance}")
+            print()
+            self.balance_menu()
+        elif user_choice == 2:
+            print("Enter income:")
+            income = int(input())
+            self.update_and_check_balance(current_user, income)
+            print("Income was added!")
+            self.balance_menu()
+        elif user_choice == 3:
+            print("Transfer")
+            print("Enter card number:")
+            receiving_card = input()
+            if receiving_card == current_user:
+                print("You can't transfer money to the same account!")
+                self.balance_menu()
+            if self.check_luhn(receiving_card) is True:
+                sql_code = f"SELECT number FROM card WHERE number = {receiving_card}"
+                cur.execute(sql_code)
+                conn.commit()
+                search_result = cur.fetchone()
+                if search_result is None:
+                    print("Such a card does not exist")
+                    self.balance_menu()
+                else:
+                    print("Enter how much money you want to transfer:")
+                    transfer_amount = int(input())
+                    if self.update_and_check_balance(current_user, transfer_amount * -1 ) is False:
+                        print("Not enough money")
+                        self.balance_menu()
+                    else:
+                        self.update_and_check_balance(current_user, transfer_amount * -1)
+                        self.update_and_check_balance(receiving_card, transfer_amount)
+                        print("Success!")
+                        self.balance_menu()
+            else:
+                print("Probably you made a mistake in the card number. Please try again!")
+                self.balance_menu()
+        elif user_choice == 4:
+            sql_code = f"DELETE FROM card where number = {current_user}"
+            cur.execute(sql_code)
+            conn.commit()
+            current_user = ""
+            print()
+            print("The account has been closed!")
+            print()
+            self.main_menu()
+        elif user_choice == 5:
+            current_user = ""
+            self.main_menu()
+        else:
+            print()
+            print("Bye!")
+            self.terminate = True
+
+
+Bank().main_menu()
